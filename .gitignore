@@ -1,0 +1,8 @@
+denizbank.json
+lwintforticnappeu.json
+network_alerts.json
+
+__pycache__/
+.venv/
+
+.DS_Store

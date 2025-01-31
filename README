@@ -1,0 +1,106 @@
+Lacework Network Alert Parser
+============================
+
+Purpose
+-------
+This tool collects and parses network-related alerts from Lacework to help with policy creation and network monitoring. It handles three types of network connections:
+- Internal connections (pod-to-pod, service-to-service)
+- Inbound connections from external sources
+- Outbound connections to external destinations
+
+Files Structure
+--------------
+Main Components:
+- lacework_api.py: Main API interface to Lacework
+  - Handles authentication
+  - Collects alerts
+  - Routes alerts to appropriate parsers
+  - Saves raw and parsed data
+
+Parsers Directory:
+- parsers/internal_connection_parser.py: Handles pod-to-pod and service-to-service connections
+- parsers/external_server_ip_parser.py: Handles inbound connections from external sources
+- parsers/external_client_conn_parser.py: Handles outbound connections to external destinations
+- parsers/utils.py: Common utilities for all parsers
+
+Configuration:
+- denizbank.json: Contains Lacework API credentials and account configuration
+  Format:
+  {
+      "keyId": "YOUR_KEY_ID",
+      "secret": "YOUR_SECRET",
+      "account": "your-account.lacework.net"
+  }
+
+Output Files:
+- network_alerts.json: Raw alerts from Lacework API
+- detailed_network_alerts.json: Parsed and structured connection data
+
+Alert Types
+----------
+1. NewInternalConnection
+   - Internal network traffic
+   - Pod-to-pod communications
+   - Service-to-service connections
+
+2. NewExternalServerIp
+   - Inbound connections
+   - External IPs connecting to internal services
+   - Listening ports and services
+
+3. NewExternalClientConn
+   - Outbound connections
+   - Internal services connecting to external destinations
+   - External APIs and services accessed
+
+Parser Output Format
+------------------
+All parsers produce standardized JSON:
+{
+    "alert_id": "unique_id",
+    "alert_type": "alert_type",
+    "severity": "severity_level",
+    "time": "timestamp",
+    "connection": {
+        "source": {
+            "hosts": ["host1", "host2"],
+            "applications": ["app1", "app2"],
+            "pods": ["pod1", "pod2"],
+            "ips": ["ip1", "ip2"],
+            "users": ["user1", "user2"]
+        },
+        "destination": {
+            "hosts": ["host1", "host2"],
+            "applications": ["app1", "app2"],
+            "pods": ["pod1", "pod2"],
+            "ips": ["ip1", "ip2"],
+            "users": ["user1", "user2"],
+            "ports": ["port1", "port2"]
+        }
+    }
+}
+
+Usage
+-----
+1. Configure Lacework credentials in denizbank.json
+2. Run: python3 lacework_api.py
+3. Review parsed alerts in network_alerts.json
+
+Processing Flow
+--------------
+1. Authentication with Lacework API
+2. Fetch alerts for specified time range
+3. Filter for network-related alert types
+4. Get detailed information for each alert
+5. Route to appropriate parser based on alert type
+6. Parse and structure connection information
+7. Save both raw and parsed data
+
+Requirements
+-----------
+- Python 3.x
+- requests library
+- Lacework API access
+- Valid API credentials
+
+Note: The tool includes rate limiting and retry logic to handle API restrictions. 
