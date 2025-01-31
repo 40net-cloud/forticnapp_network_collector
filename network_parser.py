@@ -568,7 +568,7 @@ def main():
     try:
         # Initialize with custom lookback period (optional)
         lw = LaceworkAPI(
-            config_file='lwintforticnappeu.json',
+            config_file='secretsfile.json',
             lookback_hours=CONFIG['DEFAULT_LOOKBACK_HOURS']
         )
         

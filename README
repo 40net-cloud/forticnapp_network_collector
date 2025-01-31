@@ -11,7 +11,7 @@ This tool collects and parses network-related alerts from Lacework to help with 
 Files Structure
 --------------
 Main Components:
-- lacework_api.py: Main API interface to Lacework
+- network_parser.py: Main API interface to Lacework
   - Handles authentication
   - Collects alerts
   - Routes alerts to appropriate parsers
@@ -24,7 +24,7 @@ Parsers Directory:
 - parsers/utils.py: Common utilities for all parsers
 
 Configuration:
-- denizbank.json: Contains Lacework API credentials and account configuration
+- secretsfile.json: Contains Lacework API credentials and account configuration
   Format:
   {
       "keyId": "YOUR_KEY_ID",
@@ -82,8 +82,8 @@ All parsers produce standardized JSON:
 
 Usage
 -----
-1. Configure Lacework credentials in denizbank.json
-2. Run: python3 lacework_api.py
+1. Configure Lacework credentials in secretsfile.json
+2. Run: python3 network_parser.py
 3. Review parsed alerts in network_alerts.json
 
 Processing Flow
