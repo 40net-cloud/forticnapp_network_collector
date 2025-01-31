@@ -16,11 +16,31 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Global configuration
+CONFIG = {
+    'DEFAULT_LOOKBACK_HOURS': 24,     # Default hours to look back
+    'REQUESTS_PER_SECOND': 2,        # API rate limit
+    'MAX_RETRIES': 3,                # Maximum retry attempts
+    'TOKEN_EXPIRY_BUFFER': 300,      # Buffer time in seconds before token expiry
+    'DEFAULT_ALERT_TYPES': [
+        "NewExternalServerIp",       # Inbound connections
+        "NewExternalClientConn",     # Outbound connections
+        "NewInternalConnection"      # Internal connections
+    ]
+}
+
 class LaceworkAPI:
-    def __init__(self, config_file=None):
+    def __init__(self, config_file=None, lookback_hours=None):
         """
         Initialize with either a config file or environment variables
+        
+        Args:
+            config_file (str): Path to config file
+            lookback_hours (int): Override default lookback period
         """
+        # Set lookback period
+        self.lookback_hours = lookback_hours or CONFIG['DEFAULT_LOOKBACK_HOURS']
+        
         if config_file:
             try:
                 with open(config_file, 'r') as f:
@@ -48,7 +68,7 @@ class LaceworkAPI:
         
         # Configure retry strategy
         self.retry_strategy = Retry(
-            total=3,  # number of retries
+            total=CONFIG['MAX_RETRIES'],  # number of retries
             backoff_factor=1,  # wait 1, 2, 4 seconds between retries
             status_forcelist=[429, 500, 502, 503, 504]  # HTTP status codes to retry on
         )
@@ -57,7 +77,7 @@ class LaceworkAPI:
         self.session.mount("https://", self.adapter)
         
         # Rate limiting
-        self.requests_per_second = 2  # Adjust this based on your API limits
+        self.requests_per_second = CONFIG['REQUESTS_PER_SECOND']
         self.last_request_time = 0
 
     def _log_response(self, method, url, response, params=None):
@@ -105,7 +125,7 @@ class LaceworkAPI:
             token_data = response.json()
             self.token = token_data["token"]
             # Set token expiry 5 minutes before actual expiry
-            self.token_expiry = datetime.now(UTC) + timedelta(seconds=3300)
+            self.token_expiry = datetime.now(UTC) + timedelta(seconds=CONFIG['TOKEN_EXPIRY_BUFFER'])
             logger.info("Successfully obtained new access token")
             return self.token
             
@@ -136,7 +156,7 @@ class LaceworkAPI:
         }
         
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
-        max_retries = 3
+        max_retries = CONFIG['MAX_RETRIES']
         retry_count = 0
         
         while retry_count < max_retries:
@@ -175,38 +195,65 @@ class LaceworkAPI:
 
     def get_alerts(self, start_time=None, end_time=None, alert_types=None):
         """
-        Get alerts from Lacework
+        Get all alerts from Lacework with pagination
         
         Args:
             start_time (str): ISO format start time
             end_time (str): ISO format end time
-            alert_types (list): List of alert types to filter for (e.g., ["NewExternalServerDns", "UnauthorizedAPICall"])
+            alert_types (list): List of alert types to filter for
         """
         if not start_time:
-            start_time = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+            start_time = (datetime.now(UTC) - timedelta(hours=self.lookback_hours)).isoformat()
         if not end_time:
             end_time = datetime.now(UTC).isoformat()
 
-        params = {
-            "startTime": start_time,
-            "endTime": end_time,
-            "limit": 100
-        }
-        
-        # Get alerts
-        alerts = self._make_request("GET", "Alerts", params=params)
-        
-        # Filter by alert type if specified
-        if alert_types:
-            if isinstance(alerts.get('data'), list):
-                alerts['data'] = [
-                    alert for alert in alerts['data']
+        all_alerts = []
+        next_page = None
+        page_number = 1
+
+        while True:
+            params = {
+                "startTime": start_time,
+                "endTime": end_time,
+                "limit": 100  # Maximum allowed per page
+            }
+            
+            if next_page:
+                params["nextPage"] = next_page
+
+            # Get alerts for current page
+            response = self._make_request("GET", "Alerts", params=params)
+            
+            if not response or 'data' not in response:
+                break
+
+            current_alerts = response.get('data', [])
+            
+            # Filter by alert type if specified
+            if alert_types:
+                current_alerts = [
+                    alert for alert in current_alerts
                     if alert.get('alertType') in alert_types
                 ]
-                alerts['paging']['rows'] = len(alerts['data'])
-                alerts['paging']['totalRows'] = len(alerts['data'])
-        
-        return alerts
+            
+            all_alerts.extend(current_alerts)
+            
+            # Check if there's a next page
+            next_page = response.get('paging', {}).get('urls', {}).get('nextPage')
+            logger.info(f"Retrieved page {page_number} with {len(current_alerts)} alerts")
+            
+            if not next_page:
+                break
+                
+            page_number += 1
+
+        return {
+            'data': all_alerts,
+            'paging': {
+                'rows': len(all_alerts),
+                'totalRows': len(all_alerts)
+            }
+        }
 
     def get_alert_details(self, alert_id, scope="Details"):
         """
@@ -303,7 +350,7 @@ class LaceworkAPI:
             returns (list): List of fields to return
         """
         if not start_time:
-            start_time = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
+            start_time = (datetime.now(UTC) - timedelta(hours=self.lookback_hours)).isoformat()
             
         payload = {
             "timeFilter": {
@@ -519,20 +566,21 @@ def save_raw_response(response_data, filename="raw_lacework_response.json"):
 def main():
     """Example usage"""
     try:
-        lw = LaceworkAPI(config_file='lwintforticnappeu.json')
+        # Initialize with custom lookback period (optional)
+        lw = LaceworkAPI(
+            config_file='lwintforticnappeu.json',
+            lookback_hours=CONFIG['DEFAULT_LOOKBACK_HOURS']
+        )
         
+        # Get time range based on lookback period
         end_time = datetime.now(UTC)
-        start_time = end_time - timedelta(hours=12)
+        start_time = end_time - timedelta(hours=lw.lookback_hours)
         
-        # Get both types of network alerts
+        # Get network alerts using default alert types from CONFIG
         alerts = lw.get_alerts(
             start_time=start_time.isoformat(),
             end_time=end_time.isoformat(),
-            alert_types=[
-                "NewExternalServerIp",     # Inbound connections
-                "NewExternalClientConn",    # Outbound connections
-                "NewInternalConnection"      # Internal connections
-            ]
+            alert_types=CONFIG['DEFAULT_ALERT_TYPES']
         )
         
         # Map alert types to their parsers
