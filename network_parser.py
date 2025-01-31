@@ -1,3 +1,31 @@
+"""
+Lacework Network Alert Parser
+============================
+
+This module collects and parses network-related alerts from Lacework to help with 
+policy creation and network monitoring. It handles different types of network connections:
+
+Alert Types:
+- NewExternalServerIp: Inbound connections from external IPs
+- NewExternalServerIPConn: Detailed inbound connection information
+- NewExternalServerDns: DNS-based inbound connections
+- NewExternalServerDNSConn: Detailed DNS-based connection information
+- NewExternalClientIp: Outbound connections to external IPs
+- NewExternalClientConn: Detailed outbound connection information
+- NewInternalConnection: Internal pod-to-pod/service connections
+
+Usage:
+    python network_parser.py
+
+Configuration:
+    Requires a JSON config file with Lacework credentials:
+    {
+        "account": "your-account.lacework.net",
+        "keyId": "your-key-id",
+        "secret": "your-secret"
+    }
+"""
+
 import requests
 import json
 from datetime import datetime, timedelta, UTC
@@ -30,9 +58,18 @@ CONFIG = {
     'MAX_RETRIES': 3,                # Maximum retry attempts
     'TOKEN_EXPIRY_BUFFER': 300,      # Buffer time in seconds before token expiry
     'DEFAULT_ALERT_TYPES': [
-        "NewExternalServerIp",       # Inbound connections
-        "NewExternalClientConn",     # Outbound connections
-        "NewInternalConnection"      # Internal connections
+        # Inbound connections
+        "NewExternalServerIp",
+        "NewExternalServerIPConn",
+        "NewExternalServerDns",
+        "NewExternalServerDNSConn",
+        
+        # Outbound connections
+        "NewExternalClientIp",
+        "NewExternalClientConn",
+        
+        # Internal connections
+        "NewInternalConnection"
     ]
 }
 
