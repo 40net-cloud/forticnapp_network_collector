@@ -3,21 +3,36 @@ import json
 def parse_alert(alert_data):
     """Parse NewInternalConnection alert details for complete policy information"""
     
+    # First build IP to container/pod mapping
+    ip_mapping = {}
+    for container in alert_data.get("entityMap", {}).get("Container", []):
+        if "PROPS" in container:
+            ip = container["PROPS"].get("ip_addr")
+            if ip:
+                ip_mapping[ip] = {
+                    "pod_name": container["PROPS"].get("pod_name"),
+                    "container_name": container["PROPS"].get("container_name"),
+                    "image_name": container["PROPS"].get("image_name"),
+                    "namespace": container["PROPS"].get("namespace")
+                }
+
     connection_info = {
         "source": {
-            "hosts": set(),      # All source hosts
-            "applications": set(),  # All source applications
-            "pods": set(),       # All source pods
-            "ips": set(),        # All source IPs
-            "users": set()       # All source users
+            "hosts": set(),
+            "applications": set(),
+            "pods": set(),
+            "ips": set(),
+            "users": set(),
+            "containers": {}  # IP -> container details mapping
         },
         "destination": {
-            "hosts": set(),      # All destination hosts
-            "applications": set(),  # All destination applications
-            "pods": set(),       # All destination pods
-            "ips": set(),        # All destination IPs
-            "users": set(),      # All destination users
-            "ports": set()       # All destination ports
+            "hosts": set(),
+            "applications": set(),
+            "pods": set(),
+            "ips": set(),
+            "users": set(),
+            "ports": set(),
+            "containers": {}  # IP -> container details mapping
         }
     }
     
@@ -84,17 +99,20 @@ def parse_alert(alert_data):
             ip = ip_entry["KEY"].get("ip_addr")
             ports = ip_entry["PROPS"].get("port_list", [])
             
-            # Add all ports to destination (as they are listening ports)
-            connection_info["destination"]["ports"].update(map(str, ports))
+            # If this IP belongs to a container, get its details
+            container_info = ip_mapping.get(ip)
             
-            # Determine direction based on known IPs
             if ip in connection_info["source"]["ips"]:
-                continue  # Already added
-            elif ip in connection_info["destination"]["ips"]:
-                continue  # Already added
+                if container_info:
+                    connection_info["source"]["containers"][ip] = container_info
+                    connection_info["source"]["pods"].add(container_info["pod_name"])
+                    connection_info["source"]["applications"].add(container_info["image_name"])
             else:
-                # If we can't determine direction, add to destination (most common case)
-                connection_info["destination"]["ips"].add(ip)
+                if container_info:
+                    connection_info["destination"]["containers"][ip] = container_info
+                    connection_info["destination"]["pods"].add(container_info["pod_name"])
+                    connection_info["destination"]["applications"].add(container_info["image_name"])
+                connection_info["destination"]["ports"].update(map(str, ports))
 
     return {
         "alert_id": alert_data.get("alertId"),
@@ -107,7 +125,8 @@ def parse_alert(alert_data):
                 "applications": sorted(list(connection_info["source"]["applications"])),
                 "pods": sorted(list(connection_info["source"]["pods"])),
                 "ips": sorted(list(connection_info["source"]["ips"])),
-                "users": sorted(list(connection_info["source"]["users"]))
+                "users": sorted(list(connection_info["source"]["users"])),
+                "containers": connection_info["source"]["containers"]  # IP -> container details
             },
             "destination": {
                 "hosts": sorted(list(connection_info["destination"]["hosts"])),
@@ -115,7 +134,8 @@ def parse_alert(alert_data):
                 "pods": sorted(list(connection_info["destination"]["pods"])),
                 "ips": sorted(list(connection_info["destination"]["ips"])),
                 "users": sorted(list(connection_info["destination"]["users"])),
-                "ports": sorted(list(connection_info["destination"]["ports"]))
+                "ports": sorted(list(connection_info["destination"]["ports"])),
+                "containers": connection_info["destination"]["containers"]  # IP -> container details
             }
         }
     } 
