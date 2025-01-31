@@ -7,7 +7,14 @@ from pprint import pprint, pformat
 import time
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
-from parsers import external_server_ip_parser, external_client_conn_parser, internal_connection_parser, utils
+from parsers import (
+    external_server_ip_parser, 
+    external_client_conn_parser, 
+    external_client_ip_parser,
+    internal_connection_parser, 
+    utils,
+    external_server_dns_parser
+)
 
 # Enhanced logging setup
 logging.basicConfig(
@@ -196,11 +203,6 @@ class LaceworkAPI:
     def get_alerts(self, start_time=None, end_time=None, alert_types=None):
         """
         Get all alerts from Lacework with pagination
-        
-        Args:
-            start_time (str): ISO format start time
-            end_time (str): ISO format end time
-            alert_types (list): List of alert types to filter for
         """
         if not start_time:
             start_time = (datetime.now(UTC) - timedelta(hours=self.lookback_hours)).isoformat()
@@ -210,6 +212,9 @@ class LaceworkAPI:
         all_alerts = []
         next_page = None
         page_number = 1
+
+        logger.info(f"Fetching alerts from {start_time} to {end_time}")
+        logger.info(f"Looking for alert types: {alert_types}")
 
         while True:
             params = {
@@ -225,28 +230,39 @@ class LaceworkAPI:
             response = self._make_request("GET", "Alerts", params=params)
             
             if not response or 'data' not in response:
+                logger.warning(f"No data in response for page {page_number}")
                 break
 
             current_alerts = response.get('data', [])
+            logger.info(f"Retrieved {len(current_alerts)} alerts on page {page_number}")
             
-            # Filter by alert type if specified
+            # Log alert types we're seeing
+            alert_types_found = set(alert.get('alertType') for alert in current_alerts)
+            logger.info(f"Alert types found on page {page_number}: {alert_types_found}")
+            
+            # Filter by alert type if specified, but be more inclusive
             if alert_types:
-                current_alerts = [
+                filtered_alerts = [
                     alert for alert in current_alerts
-                    if alert.get('alertType') in alert_types
+                    if any(alert_type in alert.get('alertType', '') 
+                          for alert_type in alert_types)
                 ]
+                logger.info(f"After filtering, kept {len(filtered_alerts)} alerts")
+                logger.info(f"Alert types found: {set(a.get('alertType') for a in filtered_alerts)}")
+                current_alerts = filtered_alerts
             
             all_alerts.extend(current_alerts)
             
             # Check if there's a next page
             next_page = response.get('paging', {}).get('urls', {}).get('nextPage')
-            logger.info(f"Retrieved page {page_number} with {len(current_alerts)} alerts")
-            
             if not next_page:
+                logger.info("No more pages to fetch")
                 break
                 
+            logger.info(f"Moving to page {page_number + 1}")
             page_number += 1
 
+        logger.info(f"Total alerts collected: {len(all_alerts)}")
         return {
             'data': all_alerts,
             'paging': {
@@ -566,11 +582,26 @@ def save_raw_response(response_data, filename="raw_lacework_response.json"):
 def main():
     """Example usage"""
     try:
-        # Initialize with custom lookback period (optional)
         lw = LaceworkAPI(
             config_file='secretsfile.json',
             lookback_hours=CONFIG['DEFAULT_LOOKBACK_HOURS']
         )
+        
+        # Update CONFIG with all known network-related alert types
+        CONFIG['DEFAULT_ALERT_TYPES'] = [
+            # Inbound connections
+            "NewExternalServerIp",
+            "NewExternalServerIPConn",
+            "NewExternalServerDns",
+            "NewExternalServerDNSConn",
+            
+            # Outbound connections
+            "NewExternalClientIp",
+            "NewExternalClientConn",
+            
+            # Internal connections
+            "NewInternalConnection"
+        ]
         
         # Get time range based on lookback period
         end_time = datetime.now(UTC)
@@ -585,8 +616,17 @@ def main():
         
         # Map alert types to their parsers
         parsers = {
+            # Inbound connection parsers
             "NewExternalServerIp": external_server_ip_parser,
+            "NewExternalServerIPConn": external_server_ip_parser,
+            "NewExternalServerDns": external_server_dns_parser,
+            "NewExternalServerDNSConn": external_server_dns_parser,
+            
+            # Outbound connection parsers
+            "NewExternalClientIp": external_client_ip_parser,
             "NewExternalClientConn": external_client_conn_parser,
+            
+            # Internal connection parser
             "NewInternalConnection": internal_connection_parser
         }
         
@@ -603,6 +643,8 @@ def main():
                     parsed_alert = parser.parse_alert(alert_data)
                     print(utils.format_alert_json(parsed_alert))
                     print("-" * 80)
+                else:
+                    logger.warning(f"No parser found for alert type: {alert_type}")
                 
             except Exception as e:
                 logger.error(f"Error processing alert {alert.get('alertId')}: {str(e)}")

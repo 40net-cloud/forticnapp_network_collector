@@ -1,7 +1,7 @@
 import json
 
 def parse_alert(alert_data):
-    """Parse NewExternalClientConn alert details (outbound connections)"""
+    """Parse NewExternalClientIp alert details (outbound connections from specific IPs)"""
     
     # First build IP to container/pod mapping
     ip_mapping = {}
@@ -33,11 +33,12 @@ def parse_alert(alert_data):
             "users": set(),
             "ports": set(),      # Destination ports
             "location": {},      # Geographical location info
-            "domain": set()      # Domain names if available
+            "domain": set(),     # Domain names if available
+            "cloud_provider": set()  # Cloud provider info if available
         }
     }
     
-    # Get all Machine entities (source machines)
+    # Get source information from Machine entities
     for machine in alert_data.get("entityMap", {}).get("Machine", []):
         if "PROPS" in machine:
             hostname = machine["PROPS"].get("hostname")
@@ -50,7 +51,7 @@ def parse_alert(alert_data):
                 if user:
                     connection_info["source"]["users"].add(user)
 
-    # Get all Container/Pod information (source containers)
+    # Get container/pod information
     for container in alert_data.get("entityMap", {}).get("Container", []):
         if "PROPS" in container:
             pod_name = container["PROPS"].get("pod_name")
@@ -66,13 +67,14 @@ def parse_alert(alert_data):
                     if image_name:
                         connection_info["source"]["applications"].add(image_name)
 
-    # Get external destination IPs and ports
+    # Get destination information from IpAddress entities
     for ip_entry in alert_data.get("entityMap", {}).get("IpAddress", []):
         if "PROPS" in ip_entry:
             ip = ip_entry["KEY"].get("ip_addr")
             ports = ip_entry["PROPS"].get("port_list", [])
             location = ip_entry["PROPS"].get("location", {})
             domain = ip_entry["PROPS"].get("domain_name")
+            cloud_provider = ip_entry["PROPS"].get("cloud_provider")
             
             # If IP is not in our source IPs, it's external
             if ip not in connection_info["source"]["ips"]:
@@ -82,10 +84,12 @@ def parse_alert(alert_data):
                     connection_info["destination"]["location"][ip] = location
                 if domain:
                     connection_info["destination"]["domain"].add(domain)
+                if cloud_provider:
+                    connection_info["destination"]["cloud_provider"].add(cloud_provider)
 
     return {
         "alert_id": alert_data.get("alertId"),
-        "alert_type": "NewExternalClientConn",
+        "alert_type": "NewExternalClientIp",
         "severity": alert_data.get("severity"),
         "time": alert_data.get("startTime"),
         "connection": {
@@ -105,7 +109,8 @@ def parse_alert(alert_data):
                 "users": sorted(list(connection_info["destination"]["users"])),
                 "ports": sorted(list(connection_info["destination"]["ports"])),
                 "location": connection_info["destination"]["location"],
-                "domain": sorted(list(connection_info["destination"]["domain"]))
+                "domain": sorted(list(connection_info["destination"]["domain"])),
+                "cloud_provider": sorted(list(connection_info["destination"]["cloud_provider"]))
             }
         }
     } 
