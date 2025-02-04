@@ -93,6 +93,22 @@ def parse_alert(alert_data):
                 if ip_addr:
                     connection_info["destination"]["ips"].add(ip_addr)
     
+    # Parse description for ports
+    if "TCP port" in description:
+        port_part = description.split("TCP port")[1].split("running")[0].strip()
+        # Handle format "High Ports (5000)"
+        if "(" in port_part:
+            port = port_part.split("(")[1].split(")")[0].strip()
+            connection_info["destination"]["ports"].add(port)
+        # Handle format "HTTPS(443)"
+        elif "HTTPS" in port_part:
+            port = port_part.split("(")[1].split(")")[0].strip()
+            connection_info["destination"]["ports"].add(port)
+        # Handle plain port numbers
+        else:
+            port = port_part.strip()
+            connection_info["destination"]["ports"].add(port)
+
     # Get all IP addresses and ports
     for ip_entry in alert_data.get("entityMap", {}).get("IpAddress", []):
         if "PROPS" in ip_entry:

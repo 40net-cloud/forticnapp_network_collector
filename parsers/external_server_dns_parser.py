@@ -48,8 +48,18 @@ def parse_alert(alert_data):
         # Extract port
         if "TCP port" in description:
             port_part = description.split("TCP port")[1].split(".")[0].strip()
+            # Handle format "HTTPS(443)"
             if "(" in port_part:
-                port = port_part.split("(")[1].split(")")[0]
+                port = port_part.split("(")[1].split(")")[0].strip()
+                connection_info["destination"]["ports"].add(port)
+            # Handle named ports
+            elif "HTTP" in port_part:
+                connection_info["destination"]["ports"].add("80")
+            elif "HTTPS" in port_part:
+                connection_info["destination"]["ports"].add("443")
+            # Handle plain port numbers
+            else:
+                port = port_part.strip()
                 connection_info["destination"]["ports"].add(port)
 
     # Get machine information

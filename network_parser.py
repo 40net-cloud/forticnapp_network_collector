@@ -43,6 +43,7 @@ from parsers import (
     utils,
     external_server_dns_parser
 )
+import argparse
 
 # Enhanced logging setup
 logging.basicConfig(
@@ -53,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 # Global configuration
 CONFIG = {
-    'DEFAULT_LOOKBACK_HOURS': 24,     # Default hours to look back
+    'DEFAULT_LOOKBACK_HOURS': 24 * 7,     # Default hours to look back
     'REQUESTS_PER_SECOND': 2,        # API rate limit
     'MAX_RETRIES': 3,                # Maximum retry attempts
     'TOKEN_EXPIRY_BUFFER': 300,      # Buffer time in seconds before token expiry
@@ -237,10 +238,59 @@ class LaceworkAPI:
                 logger.error(f"Unexpected error in request: {str(e)}")
                 return {"data": []}
 
-    def get_alerts(self, start_time=None, end_time=None, alert_types=None):
+    def get_alerts(self, start_time=None, end_time=None, alert_types=None, alert_id=None):
         """
-        Get all alerts from Lacework with pagination
+        Get alerts from Lacework with pagination
+        
+        Args:
+            start_time (str): ISO format start time
+            end_time (str): ISO format end time
+            alert_types (list): List of alert types to filter for
+            alert_id (int): Optional specific alert ID to fetch
         """
+        # If alert_id is provided, get just that alert
+        if alert_id:
+            logger.info(f"Fetching specific alert ID: {alert_id}")
+            try:
+                # Use last 90 days as search window
+                start_time = (datetime.now(UTC) - timedelta(days=90)).isoformat()
+                end_time = datetime.now(UTC).isoformat()
+                
+                params = {
+                    "filters": [{"field": "alertId", "expression": "eq", "value": alert_id}],
+                    "timeFilter": {
+                        "startTime": start_time,
+                        "endTime": end_time
+                    }
+                }
+                response = self._make_request("POST", "Alerts/search", data=params)
+                
+                if not response:
+                    logger.error(f"No response received for alert ID: {alert_id}")
+                    return {'data': [], 'paging': {'rows': 0, 'totalRows': 0}}
+                
+                if 'data' not in response:
+                    logger.error(f"Unexpected response format for alert ID {alert_id}")
+                    return {'data': [], 'paging': {'rows': 0, 'totalRows': 0}}
+                
+                alerts = response.get('data', [])
+                if not alerts:
+                    logger.error(f"No alert found with ID: {alert_id}")
+                    return {'data': [], 'paging': {'rows': 0, 'totalRows': 0}}
+                
+                return {
+                    'data': alerts,
+                    'paging': {
+                        'rows': len(alerts),
+                        'totalRows': len(alerts)
+                    }
+                }
+                
+            except Exception as e:
+                logger.error(f"Error fetching alert ID {alert_id}: {str(e)}")
+                return {'data': [], 'paging': {'rows': 0, 'totalRows': 0}}
+
+        # Original pagination logic for all alerts
         if not start_time:
             start_time = (datetime.now(UTC) - timedelta(hours=self.lookback_hours)).isoformat()
         if not end_time:
@@ -610,89 +660,121 @@ def save_network_summary(alerts, api_client=None, filename="network_summary.json
         logger.error(f"Error saving network summary: {str(e)}")
         raise
 
-def save_raw_response(response_data, filename="raw_lacework_response.json"):
-    """Save raw API response to a JSON file"""
-    with open(filename, 'w') as f:
-        json.dump(response_data, f, indent=2)
-    logger.info(f"Raw response saved to {filename}")
+def save_raw_response(response_data, filename="network_alerts.json", alert_id=None):
+    """
+    Save raw API response to a JSON file
+    
+    Args:
+        response_data (dict): The data to save
+        filename (str): Default filename for multiple alerts
+        alert_id (int): If provided, save to a dedicated file with alert ID
+    """
+    try:
+        if alert_id:
+            # For single alert, save to dedicated file
+            filename = f"alert_{alert_id}.json"
+        
+        # Create output directory if it doesn't exist
+        os.makedirs('output', exist_ok=True)
+        filepath = os.path.join('output', filename)
+        
+        with open(filepath, 'w') as f:
+            json.dump(response_data, f, indent=2)
+        logger.info(f"Data saved to {filepath}")
+        
+    except Exception as e:
+        logger.error(f"Error saving data to file: {str(e)}", exc_info=True)
 
 def main():
-    """Example usage"""
+    """Main function to collect and parse alerts"""
+    parser = argparse.ArgumentParser(description='Collect and parse Lacework network alerts')
+    parser.add_argument('--alert-id', type=int, help='Specific alert ID to collect', default=None)
+    args = parser.parse_args()
+
     try:
         lw = LaceworkAPI(
             config_file='secretsfile.json',
             lookback_hours=CONFIG['DEFAULT_LOOKBACK_HOURS']
         )
         
-        # Update CONFIG with all known network-related alert types
-        CONFIG['DEFAULT_ALERT_TYPES'] = [
-            # Inbound connections
-            "NewExternalServerIp",
-            "NewExternalServerIPConn",
-            "NewExternalServerDns",
-            "NewExternalServerDNSConn",
-            
-            # Outbound connections
-            "NewExternalClientIp",
-            "NewExternalClientConn",
-            
-            # Internal connections
-            "NewInternalConnection"
-        ]
-        
         # Get time range based on lookback period
         end_time = datetime.now(UTC)
         start_time = end_time - timedelta(hours=lw.lookback_hours)
         
-        # Get network alerts using default alert types from CONFIG
+        # Get alerts (either specific ID or all)
         alerts = lw.get_alerts(
             start_time=start_time.isoformat(),
             end_time=end_time.isoformat(),
-            alert_types=CONFIG['DEFAULT_ALERT_TYPES']
+            alert_types=CONFIG['DEFAULT_ALERT_TYPES'],
+            alert_id=args.alert_id
         )
         
+        if not alerts.get('data'):
+            logger.error("No alerts found")
+            return
+            
         # Map alert types to their parsers
         parsers = {
-            # Inbound connection parsers
             "NewExternalServerIp": external_server_ip_parser,
             "NewExternalServerIPConn": external_server_ip_parser,
             "NewExternalServerDns": external_server_dns_parser,
             "NewExternalServerDNSConn": external_server_dns_parser,
-            
-            # Outbound connection parsers
             "NewExternalClientIp": external_client_ip_parser,
             "NewExternalClientConn": external_client_conn_parser,
-            
-            # Internal connection parser
             "NewInternalConnection": internal_connection_parser
         }
         
         for alert in alerts.get('data', []):
             try:
-                details = lw.get_alert_details(alert.get('alertId'), "Details")
+                if not isinstance(alert, dict):
+                    logger.error(f"Invalid alert format: {alert}")
+                    continue
+                    
+                alert_id = alert.get('alertId')
+                if not alert_id:
+                    logger.error("Alert missing alertId")
+                    continue
+                    
+                details = lw.get_alert_details(alert_id, "Details")
+                if not details:
+                    logger.error(f"No details found for alert {alert_id}")
+                    continue
+                    
                 alert_data = details.get("data", {})
+                if not alert_data:
+                    logger.error(f"No alert data found for alert {alert_id}")
+                    continue
                 
                 # Get parser for this alert type
                 alert_type = alert_data.get("alertType")
+                if not alert_type:
+                    logger.error(f"No alert type found for alert {alert_id}")
+                    continue
+                    
                 parser = parsers.get(alert_type)
-                
-                if parser:
-                    parsed_alert = parser.parse_alert(alert_data)
-                    print(utils.format_alert_json(parsed_alert))
-                    print("-" * 80)
-                else:
+                if not parser:
                     logger.warning(f"No parser found for alert type: {alert_type}")
+                    continue
+                
+                parsed_alert = parser.parse_alert(alert_data)
+                print(utils.format_alert_json(parsed_alert))
+                print("-" * 80)
                 
             except Exception as e:
-                logger.error(f"Error processing alert {alert.get('alertId')}: {str(e)}")
+                logger.error(f"Error processing alert: {str(e)}", exc_info=True)
                 continue
         
         # Save raw alerts to file
-        save_raw_response(alerts, "network_alerts.json")
-        logger.info(f"Raw alerts saved to network_alerts.json")
+        if alerts.get('data'):
+            if args.alert_id:
+                # For single alert, save to dedicated file
+                save_raw_response(alerts, alert_id=args.alert_id)
+            else:
+                # For multiple alerts, save to network_alerts.json
+                save_raw_response(alerts)
 
     except Exception as e:
-        logger.error(f"Error in main: {str(e)}")
+        logger.error(f"Error in main: {str(e)}", exc_info=True)
         raise
 
 if __name__ == "__main__":
