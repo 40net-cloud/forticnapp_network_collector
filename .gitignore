@@ -1,7 +1,8 @@
-denizbank.json
 lwintforticnappeu.json
 network_alerts.json
 secretsfile.json
+
+output/
 
 __pycache__/
 .venv/

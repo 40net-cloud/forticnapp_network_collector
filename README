@@ -1,106 +1,86 @@
 Lacework Network Alert Parser
 ============================
 
-Purpose
--------
-This tool collects and parses network-related alerts from Lacework to help with policy creation and network monitoring. It handles three types of network connections:
-- Internal connections (pod-to-pod, service-to-service)
-- Inbound connections from external sources
-- Outbound connections to external destinations
+This tool collects and parses network-related alerts from Lacework to help with policy creation and network monitoring. It handles different types of network connections and provides detailed alert information.
 
-Files Structure
---------------
-Main Components:
-- network_parser.py: Main API interface to Lacework
-  - Handles authentication
-  - Collects alerts
-  - Routes alerts to appropriate parsers
-  - Saves raw and parsed data
+Alert Types Supported
+-------------------
+- NewExternalServerIp: Inbound connections from external IPs
+- NewExternalServerIPConn: Detailed inbound connection information
+- NewExternalServerDns: DNS-based inbound connections
+- NewExternalServerDNSConn: Detailed DNS-based connection information
+- NewExternalClientIp: Outbound connections to external IPs
+- NewExternalClientConn: Detailed outbound connection information
+- NewInternalConnection: Internal pod-to-pod/service connections
 
-Parsers Directory:
-- parsers/internal_connection_parser.py: Handles pod-to-pod and service-to-service connections
-- parsers/external_server_ip_parser.py: Handles inbound connections from external sources
-- parsers/external_client_conn_parser.py: Handles outbound connections to external destinations
-- parsers/utils.py: Common utilities for all parsers
-
-Configuration:
-- secretsfile.json: Contains Lacework API credentials and account configuration
-  Format:
-  {
-      "keyId": "YOUR_KEY_ID",
-      "secret": "YOUR_SECRET",
-      "account": "your-account.lacework.net"
-  }
-
-Output Files:
-- network_alerts.json: Raw alerts from Lacework API
-- detailed_network_alerts.json: Parsed and structured connection data
-
-Alert Types
-----------
-1. NewInternalConnection
-   - Internal network traffic
-   - Pod-to-pod communications
-   - Service-to-service connections
-
-2. NewExternalServerIp
-   - Inbound connections
-   - External IPs connecting to internal services
-   - Listening ports and services
-
-3. NewExternalClientConn
-   - Outbound connections
-   - Internal services connecting to external destinations
-   - External APIs and services accessed
-
-Parser Output Format
-------------------
-All parsers produce standardized JSON:
+Configuration
+------------
+Requires a JSON config file (secretsfile.json) with Lacework credentials:
 {
-    "alert_id": "unique_id",
-    "alert_type": "alert_type",
-    "severity": "severity_level",
-    "time": "timestamp",
-    "connection": {
-        "source": {
-            "hosts": ["host1", "host2"],
-            "applications": ["app1", "app2"],
-            "pods": ["pod1", "pod2"],
-            "ips": ["ip1", "ip2"],
-            "users": ["user1", "user2"]
-        },
-        "destination": {
-            "hosts": ["host1", "host2"],
-            "applications": ["app1", "app2"],
-            "pods": ["pod1", "pod2"],
-            "ips": ["ip1", "ip2"],
-            "users": ["user1", "user2"],
-            "ports": ["port1", "port2"]
-        }
-    }
+    "account": "your-account.lacework.net",
+    "keyId": "your-key-id",
+    "secret": "your-secret"
 }
 
 Usage
 -----
-1. Configure Lacework credentials in secretsfile.json
-2. Run: python3 network_parser.py
-3. Review parsed alerts in network_alerts.json
+1. Basic alert collection:
+   python network_parser.py
 
-Processing Flow
---------------
-1. Authentication with Lacework API
-2. Fetch alerts for specified time range
-3. Filter for network-related alert types
-4. Get detailed information for each alert
-5. Route to appropriate parser based on alert type
-6. Parse and structure connection information
-7. Save both raw and parsed data
+2. Fetch specific alert by ID:
+   python network_parser.py --alert-id YOUR_ALERT_ID
+
+Output Files
+-----------
+When fetching a specific alert (e.g., alert ID 12701), the following files are generated in the output directory:
+
+1. alert_[ID]_raw.json
+   - Initial alert data from the search
+
+2. Detailed Information Files:
+   - alert_[ID]_details.json: Detailed alert information
+   - alert_[ID]_investigation.json: Investigation data
+   - alert_[ID]_events.json: Related events
+   - alert_[ID]_relatedalerts.json: Related alerts
+   - alert_[ID]_integrations.json: Integration information
+   - alert_[ID]_timeline.json: Alert timeline
+   - alert_[ID]_observationtimeline.json: Observation timeline
+
+3. alert_[ID]_all.json
+   - Combined data from all sources
+
+Time Windows
+-----------
+- Default lookback period: 7 days
+- Specific alert search: Searches in 7-day chunks up to 90 days back
+- API limitation: Maximum time window of 7 days per request
+
+Features
+--------
+1. Robust error handling and logging
+2. Rate limiting support
+3. Automatic retry on failures
+4. Comprehensive data collection across all alert scopes
+5. JSON output for easy integration with other tools
+6. Support for both bulk alert collection and specific alert lookup
+
+Parsed Information
+-----------------
+For each alert, the tool extracts:
+- Source and destination IPs
+- Port information
+- Container/pod details
+- User information
+- Application names
+- Geographic location (where applicable)
+- DNS names (for DNS-based alerts)
+- Cloud provider information (where applicable)
 
 Requirements
 -----------
-- Python 3.x
+- Python 3.6+
 - requests library
-- Lacework API access
-- Valid API credentials
+- Internet access to Lacework API
+- Valid Lacework API credentials
 
-Note: The tool includes rate limiting and retry logic to handle API restrictions. 
+Note: The tool automatically creates an 'output' directory for storing JSON files if it doesn't exist. 

@@ -238,56 +238,124 @@ class LaceworkAPI:
                 logger.error(f"Unexpected error in request: {str(e)}")
                 return {"data": []}
 
+    def get_alert_details_with_scope(self, alert_id):
+        """
+        Get all available details for an alert and save to separate JSON files
+        
+        Scopes: "Details", "Investigation", "Events", "RelatedAlerts", 
+                "Integrations", "Timeline", "ObservationTimeline"
+        """
+        scopes = [
+            "Details",
+            "Investigation", 
+            "Events",
+            "RelatedAlerts",
+            "Integrations",
+            "Timeline",
+            "ObservationTimeline"
+        ]
+        
+        results = {}
+        
+        for scope in scopes:
+            try:
+                logger.info(f"Fetching {scope} for alert {alert_id}")
+                response = self.get_alert_details(alert_id, scope)
+                
+                if response and 'data' in response:
+                    results[scope] = response
+                    
+                    # Save to separate JSON file
+                    filename = f"output/alert_{alert_id}_{scope.lower()}.json"
+                    os.makedirs('output', exist_ok=True)
+                    with open(filename, 'w') as f:
+                        json.dump(response, f, indent=2)
+                    logger.info(f"Saved {scope} data to {filename}")
+                else:
+                    logger.warning(f"No {scope} data available for alert {alert_id}")
+                    
+            except Exception as e:
+                logger.error(f"Error fetching {scope} for alert {alert_id}: {str(e)}")
+                continue
+        
+        # Save combined results
+        combined_filename = f"output/alert_{alert_id}_all.json"
+        with open(combined_filename, 'w') as f:
+            json.dump(results, f, indent=2)
+        logger.info(f"Saved combined data to {combined_filename}")
+        
+        return results
+
     def get_alerts(self, start_time=None, end_time=None, alert_types=None, alert_id=None):
         """
         Get alerts from Lacework with pagination
-        
-        Args:
-            start_time (str): ISO format start time
-            end_time (str): ISO format end time
-            alert_types (list): List of alert types to filter for
-            alert_id (int): Optional specific alert ID to fetch
         """
         # If alert_id is provided, get just that alert
         if alert_id:
             logger.info(f"Fetching specific alert ID: {alert_id}")
             try:
-                # Use last 90 days as search window
-                start_time = (datetime.now(UTC) - timedelta(days=90)).isoformat()
-                end_time = datetime.now(UTC).isoformat()
+                # Start searching from January 2025 since we know the alert date
+                end_time = datetime.now(UTC)
+                start_date = datetime(2025, 1, 15, tzinfo=UTC)  # Start a few days before Jan 21
+                chunk_size = timedelta(days=7)
                 
-                params = {
-                    "filters": [{"field": "alertId", "expression": "eq", "value": alert_id}],
-                    "timeFilter": {
-                        "startTime": start_time,
-                        "endTime": end_time
+                while start_date < end_time:
+                    chunk_end = min(start_date + chunk_size, end_time)
+                    logger.info(f"Searching for alert in time window: {start_date.isoformat()} to {chunk_end.isoformat()}")
+                    
+                    params = {
+                        "filters": [
+                            {"field": "alertId", "expression": "eq", "value": alert_id},
+                            {"field": "alertType", "expression": "eq", "value": "NewInternalConnection"},
+                            {"field": "severity", "expression": "eq", "value": "Low"}
+                        ],
+                        "timeFilter": {
+                            "startTime": start_date.isoformat(),
+                            "endTime": chunk_end.isoformat()
+                        }
                     }
-                }
-                response = self._make_request("POST", "Alerts/search", data=params)
-                
-                if not response:
-                    logger.error(f"No response received for alert ID: {alert_id}")
-                    return {'data': [], 'paging': {'rows': 0, 'totalRows': 0}}
-                
-                if 'data' not in response:
-                    logger.error(f"Unexpected response format for alert ID {alert_id}")
-                    return {'data': [], 'paging': {'rows': 0, 'totalRows': 0}}
-                
-                alerts = response.get('data', [])
-                if not alerts:
-                    logger.error(f"No alert found with ID: {alert_id}")
-                    return {'data': [], 'paging': {'rows': 0, 'totalRows': 0}}
-                
-                return {
-                    'data': alerts,
-                    'paging': {
-                        'rows': len(alerts),
-                        'totalRows': len(alerts)
-                    }
-                }
+                    
+                    response = self._make_request("POST", "Alerts/search", data=params)
+                    
+                    if not response:
+                        logger.error(f"No response received for alert ID: {alert_id} in window")
+                        start_date += chunk_size
+                        continue
+                    
+                    if 'data' not in response:
+                        logger.error(f"Unexpected response format for alert ID {alert_id} in window: {response}")
+                        start_date += chunk_size
+                        continue
+                    
+                    alerts = response.get('data', [])
+                    if alerts:
+                        logger.info(f"Found alert {alert_id} in time window")
+                        
+                        # Save the initial alert data
+                        alert_filename = f"output/alert_{alert_id}_raw.json"
+                        os.makedirs('output', exist_ok=True)
+                        with open(alert_filename, 'w') as f:
+                            json.dump(response, f, indent=2)
+                        logger.info(f"Saved raw alert data to {alert_filename}")
+                        
+                        # Get and save all additional details
+                        detailed_data = self.get_alert_details_with_scope(alert_id)
+                        
+                        return {
+                            'data': alerts,
+                            'paging': {
+                                'rows': len(alerts),
+                                'totalRows': len(alerts)
+                            }
+                        }
+                    
+                    start_date += chunk_size
+                    
+                logger.error(f"No alert found with ID: {alert_id} in the specified time range")
+                return {'data': [], 'paging': {'rows': 0, 'totalRows': 0}}
                 
             except Exception as e:
-                logger.error(f"Error fetching alert ID {alert_id}: {str(e)}")
+                logger.error(f"Error fetching alert ID {alert_id}: {str(e)}", exc_info=True)
                 return {'data': [], 'paging': {'rows': 0, 'totalRows': 0}}
 
         # Original pagination logic for all alerts
